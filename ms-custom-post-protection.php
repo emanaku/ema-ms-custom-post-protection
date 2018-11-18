@@ -3,7 +3,7 @@
 * Plugin Name: [Membership] - Custom Post Protection
 * Plugin URI: https://premium.wpmudev.org/
 * Description: Custom Post Protection for Memebership
-* Author: Panos Lyrakis @ WPMUDEV (with changes by Emanáku - ema)
+* Author: Panos Lyrakis @ WPMUDEV (with changes by Emanáku - ema - version with allowed and denied id's)
 * Author URI: https://premium.wpmudev.org/
 * License: GPLv2 or later
 */
@@ -16,7 +16,8 @@ if ( ! class_exists( 'WPMUDEV_Custom_Post_Protection' ) ) {
     class WPMUDEV_Custom_Post_Protection {
         private static $_instance = null;
         static protected $denied_ids = array();
-        static protected $default_featured_img_id = 82;
+        static protected $allowed_ids = array();	// ema
+        static protected $default_featured_img_id = 22693;
         public static function get_instance() {
             if( is_null( self::$_instance ) ){
                 self::$_instance = new WPMUDEV_Custom_Post_Protection();
@@ -30,7 +31,7 @@ if ( ! class_exists( 'WPMUDEV_Custom_Post_Protection' ) ) {
                 return;
             }
             add_action( 'pre_get_posts', array( $this, 'remove_protection_hooks' ), 98 );
-            add_action( 'pre_get_posts', array( $this, 'find_protected_posts' ), 99 );
+            add_action( 'pre_get_posts', array( $this, 'ema_find_protected_posts' ), 99 );	// added "ema_"
             add_filter( 'post_link', array( $this, 'filter_post_link' ), 20, 3 );
             add_filter( 'get_post_metadata', array( $this, 'filter_post_featured_image' ), 20, 4 );
         }
@@ -39,8 +40,18 @@ if ( ! class_exists( 'WPMUDEV_Custom_Post_Protection' ) ) {
                 return $featured_image_id;
             }
             // ema added test on get_post_type, because $denied_ids seem to provide the post_types you are not allowed to see
-            if ( in_array( $post_id, self::$denied_ids  ) || in_array( get_post_type($post_id), self::$denied_ids  ) ) {
-                $featured_image_id = self::$default_featured_img_id;
+            // print_r(self::$allowed_ids);
+            
+            // (1) if post_id (or post type) is in allowed, then show thumbnail
+            // (2) if post_id (or post type) is in denied, then show "members only"
+            // (3) if neither nor, then show thumbnail
+            
+            if ( in_array( $post_id, self::$allowed_ids  ) || in_array( get_post_type($post_id), self::$allowed_ids  ) ) {	// ema use $allowed_ids
+            	return $featured_image_id;
+            }
+            
+            if ( in_array( $post_id, self::$denied_ids  ) || in_array( get_post_type($post_id), self::$denied_ids  ) ) {	// ema use $denied_ids
+             	return self::$default_featured_img_id;
             }
             
             return $featured_image_id;
@@ -73,6 +84,36 @@ if ( ! class_exists( 'WPMUDEV_Custom_Post_Protection' ) ) {
                 }
             }
         }
+        public function ema_find_protected_posts( $wp_query ) {
+            // List rather than on a single post
+            if ( ( ! $wp_query->is_singular
+                && empty( $wp_query->query_vars['pagename'] )
+                && ( ! isset( $wp_query->query_vars['post_type'] )
+                    || in_array( $wp_query->query_vars['post_type'], array( 'post', '' ) )
+                ) )
+                || is_home()
+            ) 
+            {
+                // ema get the allowed rules
+                $rules = $this->ema_get_rules( array( 'post' , 'cpt_group') );	// ema added cpt_group and changed to ema_get_rules
+                foreach ( $rules as $membership_id => $rule ) {
+                    foreach ( $rule as $type => $items ) {
+                        foreach ( $items as $item ) {
+                            self::$allowed_ids[] = $item;
+                        }
+                    }
+                }
+                // ema get the denied rules 
+            	$rules = $this->get_rules( array( 'post' , 'cpt_group') );	// ema added cpt_group 
+                foreach ( $rules as $membership_id => $rule ) {
+                    foreach ( $rule as $type => $items ) {
+                        foreach ( $items as $item ) {
+                            self::$denied_ids[] = $item;
+                        }
+                    }
+                }
+            }
+        }
         public function find_protected_posts( $wp_query ) {
             // List rather than on a single post
             if ( ( ! $wp_query->is_singular
@@ -92,6 +133,37 @@ if ( ! class_exists( 'WPMUDEV_Custom_Post_Protection' ) ) {
                 }
             }
         }
+        
+        public function ema_get_rules( $types = array() ) {
+            $membership_ids = MS_Model_Membership::get_membership_ids();
+            $the_memberships = $this->user_memberships();   
+            if(count($the_memberships) < 1) {
+            	$the_memberships[] = 79;	// ema the guest memebership
+            }
+            $rules = array();
+            // print("Memberships<br>");print_r($the_memberships);print("<br><br>");
+            foreach ( $membership_ids as $membership_id ) {
+                // ema Only use the rules that are about Memberships for which member has already subscribed to
+                if (in_array( $membership_id, $the_memberships ) ) {
+                	$membership_rules = get_post_meta( $membership_id, 'rule_values', true );
+                 	if ( empty( $types ) ) {
+                    	$rules[ $membership_id ] = $membership_rules;
+                	} else {
+                    	foreach ( $types as $type ) {
+                        	if ( isset( $membership_rules[ $type ] ) ) {
+                            $rules[ $membership_id ][ $type ] = $membership_rules[ $type ];
+                        	}
+                    	}
+                	}
+                } 
+            }
+            return $rules;
+        }
+        
+        
+        
+        
+        
         public function get_rules( $types = array() ) {
             $membership_ids = MS_Model_Membership::get_membership_ids();
             $ignored_memberships = $this->user_memberships();            
